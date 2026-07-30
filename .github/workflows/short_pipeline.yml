@@ -1,0 +1,70 @@
+name: Shorts Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct download URL for the raw source video"
+        required: true
+      music_url:
+        description: "Direct download URL for a background music track (optional)"
+        required: false
+        default: ""
+      target_duration:
+        description: "Target duration in seconds for the final Short (max 180)"
+        required: false
+        default: "60"
+      buffer_seconds:
+        description: "Seconds of buffer removed before/after each clap"
+        required: false
+        default: "2.0"
+
+jobs:
+  build-short:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download source video
+        run: curl -L "${{ github.event.inputs.video_url }}" -o input.mp4
+
+      - name: Download music
+        if: ${{ github.event.inputs.music_url != '' }}
+        run: curl -L "${{ github.event.inputs.music_url }}" -o music.mp3
+
+      - name: Detect claps
+        run: python scripts/detect_claps.py input.mp4 --out claps.json
+
+      - name: Render short
+        run: |
+          python scripts/render_short.py input.mp4 claps.json \
+            --buffer "${{ github.event.inputs.buffer_seconds }}" \
+            --target-duration "${{ github.event.inputs.target_duration }}" \
+            ${{ github.event.inputs.music_url != '' && '--music music.mp3' || '' }} \
+            --out short.mp4
+
+      - name: Generate title and description
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/generate_metadata.py short.mp4 --out metadata.json
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-short
+          path: |
+            short.mp4
+            metadata.json
+            claps.json
+          retention-days: 7
